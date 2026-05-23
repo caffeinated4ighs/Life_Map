@@ -511,14 +511,16 @@ html, body {
 const API_BASE = "http://localhost:8000"; // change to deployed URL when hosted
 
 // ─── STATE ─────────────────────────────────────────────────────
-let playerState = {
-  mh_score:      null,
-  mh_mode:       null,
-  gold_balance:  null,
-  streak_count:  null,
-  total_xp:      null,
-  date:          new Date().toISOString().slice(0, 10),
+// currentContext is sent with every /chat request so the LLM has fresh state
+let currentContext = {
+  mh_score:     75,
+  mh_mode:      "Reduced",
+  gold_balance: 0,
+  streak_count: 0,
+  date:         new Date().toISOString().slice(0, 10),
 };
+// playerState mirrors currentContext — used by updateStatBar / applyStatDelta
+let playerState = currentContext;
 let tasks = [];
 let taskPanelOpen = false;
 
@@ -662,6 +664,17 @@ async function init() {
     } else {
       // run_morning returns: {date, snapshot, player_state, tasks, active_arcs, active_effects}
       const ps = data.player_state || {};
+
+      // Update currentContext so all subsequent /chat calls have fresh state
+      currentContext = {
+        mh_score:     ps.mh_score     ?? currentContext.mh_score,
+        mh_mode:      ps.mh_mode      ?? currentContext.mh_mode,
+        gold_balance: ps.gold_balance ?? currentContext.gold_balance,
+        streak_count: ps.streak_count ?? currentContext.streak_count,
+        date:         data.date       || currentContext.date,
+      };
+      playerState = currentContext;
+
       updateStatBar({
         mh_score:     ps.mh_score,
         mh_mode:      ps.mh_mode,
@@ -709,13 +722,7 @@ async function sendMessage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: text,
-        context: {
-          mh_score:     playerState.mh_score,
-          mh_mode:      playerState.mh_mode,
-          gold_balance: playerState.gold_balance,
-          streak_count: playerState.streak_count,
-          date:         playerState.date,
-        }
+        context: currentContext,   // always send the latest state
       }),
     });
     const data = await res.json();
@@ -731,7 +738,12 @@ async function sendMessage() {
     }
 
     if (res.ok && !data.declined && data.state_delta) {
-      applyStatDelta(data.state_delta);
+      const d = data.state_delta;
+      // Update currentContext so the next message reflects new state
+      if (d.new_mh_score     != null) currentContext.mh_score     = d.new_mh_score;
+      if (d.new_mh_mode      != null) currentContext.mh_mode      = d.new_mh_mode;
+      if (d.new_gold_balance != null) currentContext.gold_balance  = d.new_gold_balance;
+      applyStatDelta(d);
     }
   } catch (err) {
     removeTyping();
