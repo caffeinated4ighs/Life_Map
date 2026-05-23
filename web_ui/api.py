@@ -682,6 +682,7 @@ Task defaults when not stated:
 - "tonight" → Evening block, today's date
 - "this week" → end of current week
 - Category → infer from context (gym = Health, reading = Hobby, email = Work, etc.)
+- Type not stated → Optional for one-off tasks, Daily if it sounds habitual ("every morning", "daily"), Recurring if a pattern is described
 
 Completion defaults when not stated:
 - Timing → on_time
@@ -695,6 +696,10 @@ Task name matching — when scanning get_tasks results:
 - "gym" matches "Morning gym session". "ssn thing" matches "SSN support letter".
 - "Complete gym" → strip "Complete", match on "gym".
 - If multiple tasks match, pick the closest. If genuinely ambiguous, ask.
+
+Pronoun resolution:
+- If the user says "it", "that task", "the one I just added" — resolve to last_action if available in context.
+- Do NOT call get_tasks to resolve a pronoun if last_action is present — use its ID directly.
 
 ## Closing the day
 
@@ -719,6 +724,17 @@ If a tool returns an error or task not found:
 - Don't offer a list of options unless the user is genuinely stuck
 - Don't end every message with "Let me know if you need anything!"
 """
+
+# ---------------------------------------------------------------------------
+# Allowed columns for create_task — prevents unknown-column crashes (CORE-002)
+# ---------------------------------------------------------------------------
+
+_TASK_COLUMNS = {
+    "task", "type", "status", "priority", "category", "date", "energy_cost",
+    "late_rule", "late_rule_behavior", "late_rule_behavior", "mandatory", "blocked",
+    "deferred", "xp", "gold", "mh_impact", "time_block", "recurring_rule",
+    "impact_notes", "anchor_id", "reminder_needed", "reminder_lead",
+}
 
 # ---------------------------------------------------------------------------
 # Tool executor
@@ -765,9 +781,11 @@ def _execute_tool(name: str, args: dict) -> dict:
         "get_stats":          lambda a: get_stats(),
         "get_stat":           lambda a: get_stat(a["stat_id"]),
         # writes — existing
+        # CORE-002: sanitise create_task args against allowed column list
+        "create_task":        lambda a: create_task({k: v for k, v in a.items() if k in _TASK_COLUMNS}),
+        # CORE-003: pass event_type as first positional arg, not the whole dict
+        "log_event":          lambda a: log_event(a["event_type"], a),
         "complete_task":      lambda a: _resolve_and_complete(a),
-        "create_task":        lambda a: create_task(a),
-        "log_event":          lambda a: log_event(a),
         "end_day":            lambda a: _end_day_safe(a["date"]),
         # writes — new
         "create_skill":       lambda a: create_skill(a),
@@ -776,7 +794,11 @@ def _execute_tool(name: str, args: dict) -> dict:
         "update_arc":         lambda a: update_arc(a["arc_id"], a["updates"]),
         "link_arc_task":             lambda a: link_arc_task(a["arc_id"], a["task_id"]),
         "link_arc_skill":            lambda a: link_arc_skill(a["arc_id"], a["skill_id"]),
-        "create_effect":             lambda a: create_effect({**a, "type": a.pop("effect_type")} if "effect_type" in a else a),
+        # CORE-005: don't mutate args dict with .pop(); handle both key names safely
+        "create_effect":             lambda a: create_effect({
+            **{k: v for k, v in a.items() if k not in ("effect_type",)},
+            "type": a.get("effect_type", a.get("type")),
+        }),
         "update_effect":             lambda a: update_effect(a["effect_id"], a["updates"]),
         "update_task":               lambda a: update_task(a["task_id"], a["updates"]),
         "delete_task":               lambda a: delete_task(a["task_id"]),
@@ -803,18 +825,15 @@ def _execute_tool(name: str, args: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_and_complete — architectural task ID resolution
+# _resolve_and_complete — bypass MH filter for task completion (CORE-001)
 # ---------------------------------------------------------------------------
 
 def _resolve_and_complete(args: dict) -> dict:
     """
     Intercepts every complete_task call and validates the task_id against
-    the live task list before executing. If the ID is wrong or missing,
-    returns the actual task list so the model can recover without surfacing
-    the error to the user.
-
-    This removes model reliance on prompt compliance for the two-step
-    lookup sequence — the backend enforces it unconditionally.
+    the live task list before executing. Always fetches with mh_mode='Normal'
+    so MH energy filtering cannot hide a task the user wants to complete.
+    (CORE-001: task completion is an explicit user action — MH gating must not block it.)
     """
     from scripts.reads import get_tasks, get_player_state
     from scripts.writes import complete_task
@@ -824,12 +843,13 @@ def _resolve_and_complete(args: dict) -> dict:
     completion_time = args.get("completion_time", "on_time")
     partial_credit  = float(args.get("partial_credit", 1.0))
 
-    # Always resolve mh_mode from live state — don't trust the model's arg
+    # Read live mh_mode for the completion_data arg (informational only)
     ps      = get_player_state()
     mh_mode = ps.get("mh_mode", "Normal")
 
     today = _date.today().isoformat()
-    tasks = get_tasks(today, mh_mode)
+    # CORE-001: always bypass MH filter when looking up tasks for completion
+    tasks = get_tasks(today, "Normal")
 
     valid_ids = {t["id"] for t in tasks}
 
@@ -838,7 +858,7 @@ def _resolve_and_complete(args: dict) -> dict:
         # model can find the correct ID and retry within the same loop
         return {
             "error":           "task_id_not_found",
-            "message":         f"No task with that ID in today's list. Here are today's tasks:",
+            "message":         "No task with that ID in today's list. Here are today's tasks:",
             "available_tasks": [{"id": t["id"], "task": t["task"]} for t in tasks],
         }
 
@@ -955,19 +975,33 @@ def chat(req: ChatRequest):
     tomorrow = (date.today() + timedelta(days=1)).isoformat()
     ctx      = req.context or ContextBlock()
 
+    # CORE-010: derive mh_mode from live player state at request time,
+    # not from the client's potentially stale currentContext.
+    try:
+        from scripts.reads import get_player_state as _get_ps
+        _ps_live = _get_ps()
+        _live_mh_mode = _ps_live.get("mh_mode", ctx.mh_mode)
+    except Exception:
+        _live_mh_mode = ctx.mh_mode
+
     # Fetch today's task counts for richer context
     try:
         from scripts.reads import get_tasks as _get_tasks
-        _tasks_today    = _get_tasks(today, ctx.mh_mode)
+        _tasks_today    = _get_tasks(today, _live_mh_mode)
         _task_total     = len(_tasks_today)
         _task_mandatory = sum(1 for t in _tasks_today if t.get("mandatory"))
     except Exception:
         _task_total     = 0
         _task_mandatory = 0
 
+    # CORE-008: track last_action per request so the model can resolve
+    # pronouns ("it", "that task") without calling get_tasks unnecessarily.
+    # last_action is injected into the context block below.
+    _last_action: dict = {}
+
     context_block = (
         f"[Date: {today}, Tomorrow: {tomorrow} | "
-        f"MH: {ctx.mh_score} ({ctx.mh_mode}) | "
+        f"MH: {ctx.mh_score} ({_live_mh_mode}) | "
         f"Gold: {ctx.gold_balance} | Streak: {ctx.streak_count} | "
         f"Tasks today: {_task_total} ({_task_mandatory} mandatory)]"
     )
@@ -1019,6 +1053,53 @@ def chat(req: ChatRequest):
                 try:
                     result = _execute_tool(name, args)
 
+                    # CORE-008: update last_action after every write that creates/modifies an entity
+                    if name == "create_task" and isinstance(result, dict) and "task_id" in result:
+                        _last_action = {
+                            "tool": "create_task",
+                            "id":   result.get("task_id"),
+                            "name": args.get("task"),
+                        }
+                    elif name in ("update_task", "complete_task") and isinstance(result, dict):
+                        _last_action = {
+                            "tool": name,
+                            "id":   args.get("task_id"),
+                            "name": args.get("task", _last_action.get("name")),
+                        }
+                    elif name == "create_arc" and isinstance(result, dict) and "arc_id" in result:
+                        _last_action = {
+                            "tool": "create_arc",
+                            "id":   result.get("arc_id"),
+                            "name": args.get("arc"),
+                        }
+                    elif name == "create_effect" and isinstance(result, dict) and "effect_id" in result:
+                        _last_action = {
+                            "tool": "create_effect",
+                            "id":   result.get("effect_id"),
+                            "name": args.get("effect"),
+                        }
+
+                    # Inject last_action into context for subsequent rounds so the model
+                    # can resolve pronouns without an extra tool call (CORE-008)
+                    if _last_action:
+                        # Update the system context message in-place for the next round
+                        last_action_note = (
+                            f"\n[Last action: {_last_action.get('tool')} → "
+                            f"'{_last_action.get('name')}' (id: {_last_action.get('id')})]"
+                        )
+                        # Patch the first user message's context block
+                        if messages and messages[1]["role"] == "user":
+                            base = messages[1]["content"]
+                            # Only add the note once; subsequent rounds will update it
+                            if "[Last action:" not in base:
+                                messages[1]["content"] = base + last_action_note
+                            else:
+                                # Replace existing last_action note
+                                import re
+                                messages[1]["content"] = re.sub(
+                                    r"\[Last action:.*?\]", last_action_note.strip(), base
+                                )
+
                     # Capture state changes for frontend stat bar animation
                     if name == "complete_task" and isinstance(result, dict):
                         state_delta.update({
@@ -1065,7 +1146,7 @@ def chat(req: ChatRequest):
                     "content":      json.dumps(result, default=str),
                 })
 
-        # Exceeded tool rounds — shouldn't normally happen
+        # Exceeded tool rounds
         logger.warning(f"MAX_TOOL_ROUNDS ({MAX_TOOL_ROUNDS}) hit for message: {req.message[:80]!r}")
         return ChatResponse(
             reply="I got a bit turned around there. Can you try again?",

@@ -212,7 +212,8 @@ def complete_task(task_id: str, completion_data: dict) -> dict:
         }).eq("id", 1).execute()
 
         # 9. Update day_snapshots xp_earned
-        today_str = str(task.get("date", ""))
+        # CORE-006: always use today's date so late completions update today's snapshot
+        today_str = str(date_type.today())
         if today_str:
             snap = (
                 sb.table("day_snapshots")
@@ -356,7 +357,8 @@ def log_event(event_type: str, payload: dict) -> dict:
     try:
         sb = get_client()
 
-        today_str = str(date_type.today())
+        # CORE-007: honour date param from payload so retroactive events work
+        today_str = payload.get("date", str(date_type.today()))
         name = payload.get("name", "")
         quantity = int(payload.get("quantity") or 0)
 
