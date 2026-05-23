@@ -61,7 +61,7 @@ def _import_writes():
 def _import_inference():
     try:
         from inference.groq_client import call_agent
-        from inference.validate_output import validate_output
+        from inference.validate_output import validate as validate_output
         return call_agent, validate_output
     except ImportError as e:
         raise ImportError(
