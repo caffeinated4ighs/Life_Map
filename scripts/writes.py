@@ -446,7 +446,7 @@ def create_task(task_data: dict) -> dict:
     task_data keys match the tasks schema; additionally:
       skills : list[{skill_id, crossover_level}]
       arcs   : list[str]  — arc UUIDs
-      stats  : list[{stat_id, delta}]  — requires task_stats table (see notes)
+      stats  : list[{stat_id, stat_delta}]  — requires task_stats table (see notes)
 
     Returns {task_id, skill_links_created}
     """
@@ -1005,18 +1005,18 @@ def generate_recurring_tasks(date: str) -> dict:
         if not source_tasks:
             return {"success": True, "created": 0}
 
-        # Names that already exist for target date
+        # Names that already exist for target date (case-insensitive)
         existing_res = (
             sb.table("tasks")
             .select("task")
             .eq("date", date)
             .execute()
         )
-        existing_names = {r["task"] for r in existing_res.data or []}
+        existing_names = {r["task"].lower() for r in existing_res.data or []}
 
         created = 0
         for t in source_tasks:
-            if t["task"] in existing_names:
+            if t["task"].lower() in existing_names:
                 continue
 
             new_row = {k: v for k, v in t.items()}
