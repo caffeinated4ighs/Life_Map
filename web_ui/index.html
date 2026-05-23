@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#111318">
+<title>Life Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;500;600&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+
+<style>
+/* ─── VARIABLES ──────────────────────────────────────────────── */
+:root {
+  --bg:          #111318;
+  --bg2:         #181c24;
+  --bg3:         #1e2330;
+  --border:      #2a3044;
+  --border-hi:   #3d4f6e;
+  --text:        #c8d0e0;
+  --text-dim:    #5a6480;
+  --text-bright: #e8eef8;
+  --accent:      #4a9eff;
+  --accent-dim:  #1a3a6e;
+  --gold:        #f0b429;
+  --gold-dim:    #6b4e10;
+  --mh-green:    #34d399;
+  --mh-amber:    #fbbf24;
+  --mh-red:      #f87171;
+  --xp:          #a78bfa;
+  --system-bg:   #141922;
+  --user-bg:     #1a2540;
+  --declined-bg: #2a1818;
+  --mono:        'Share Tech Mono', monospace;
+  --sans:        'Barlow', sans-serif;
+  --cond:        'Barlow Condensed', sans-serif;
+}
+
+/* ─── RESET ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+/* ─── LAYOUT ─────────────────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  height: 100vh; /* fallback */
+}
+
+/* ─── STAT BAR ───────────────────────────────────────────────── */
+#stat-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 0 12px;
+  height: 52px;
+  overflow: hidden;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-right: 1px solid var(--border);
+  height: 100%;
+  flex-shrink: 0;
+}
+.stat-item:last-child { border-right: none; }
+
+.stat-label {
+  font-family: var(--cond);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.stat-value {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text-bright);
+  transition: color 0.3s, transform 0.15s;
+}
+.stat-value.bump {
+  transform: scale(1.2);
+  color: var(--accent);
+}
+
+.mh-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--mh-green);
+  transition: background 0.5s;
+  flex-shrink: 0;
+}
+
+.stat-logo {
+  margin-right: auto;
+  font-family: var(--cond);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-bright);
+  padding-right: 10px;
+  border-right: 1px solid var(--border);
+  text-transform: uppercase;
+}
+
+#mode-badge {
+  font-family: var(--cond);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 2px 8px;
+  border-radius: 2px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+/* ─── TASK PANEL ─────────────────────────────────────────────── */
+#task-panel {
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+#task-panel.open { max-height: 280px; overflow-y: auto; }
+
+#task-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  cursor: pointer;
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  min-height: 44px;
+}
+#task-header:hover { background: #232840; }
+
+.task-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--cond);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+#task-count {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 2px;
+}
+
+#task-chevron {
+  color: var(--text-dim);
+  font-size: 12px;
+  transition: transform 0.2s;
+}
+#task-panel.open #task-chevron { transform: rotate(180deg); }
+
+#task-list {
+  padding: 4px 0 8px;
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+  min-height: 44px;
+}
+.task-row:hover { background: var(--bg3); }
+.task-row:active { background: var(--border); }
+
+.task-status {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.task-status.pending   { background: var(--text-dim); border: 1px solid var(--border-hi); }
+.task-status.complete  { background: var(--mh-green); }
+.task-status.partial   { background: var(--mh-amber); }
+.task-status.skipped   { background: var(--mh-red); }
+
+.task-name {
+  font-size: 14px;
+  color: var(--text);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-xp {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--xp);
+  flex-shrink: 0;
+}
+
+/* ─── CHAT AREA ──────────────────────────────────────────────── */
+#chat-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  scroll-behavior: smooth;
+}
+
+/* custom scrollbar */
+#chat-wrap::-webkit-scrollbar { width: 4px; }
+#chat-wrap::-webkit-scrollbar-track { background: transparent; }
+#chat-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.msg {
+  display: flex;
+  margin-bottom: 12px;
+  animation: msg-in 0.2s ease both;
+}
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg.user  { justify-content: flex-end; }
+.msg.system { justify-content: flex-start; }
+
+.bubble {
+  max-width: 82%;
+  padding: 10px 14px;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1.55;
+  position: relative;
+}
+
+.msg.user .bubble {
+  background: var(--user-bg);
+  border: 1px solid var(--border-hi);
+  color: var(--text-bright);
+  font-family: var(--sans);
+  border-radius: 4px 4px 0 4px;
+}
+
+.msg.system .bubble {
+  background: var(--system-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  border-radius: 0 4px 4px 4px;
+  border-left: 2px solid var(--accent);
+}
+
+.msg.system.declined .bubble {
+  background: var(--declined-bg);
+  border-left-color: var(--mh-amber);
+}
+
+.msg.system.welcome .bubble {
+  border-left-color: var(--mh-green);
+}
+
+/* delta tags that appear inside system messages */
+.delta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.delta-tag {
+  font-family: var(--cond);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  border-radius: 2px;
+  text-transform: uppercase;
+}
+.delta-tag.xp   { background: #2d1f5e; color: var(--xp); }
+.delta-tag.gold { background: var(--gold-dim); color: var(--gold); }
+.delta-tag.mh   { background: #0f2e20; color: var(--mh-green); }
+.delta-tag.mh.neg { background: #2e0f0f; color: var(--mh-red); }
+
+/* typing indicator */
+.typing-bubble {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 14px;
+}
+.typing-bubble span {
+  display: inline-block;
+  width: 6px; height: 6px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  animation: bounce 1s infinite;
+}
+.typing-bubble span:nth-child(2) { animation-delay: 0.15s; }
+.typing-bubble span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes bounce {
+  0%,80%,100% { transform: translateY(0); }
+  40%          { transform: translateY(-6px); opacity: 0.7; }
+}
+
+/* ─── INPUT BAR ──────────────────────────────────────────────── */
+#input-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  /* keyboard-safe on mobile */
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+
+#msg-input {
+  flex: 1;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-bright);
+  font-family: var(--sans);
+  font-size: 16px; /* prevents iOS zoom */
+  padding: 10px 14px;
+  outline: none;
+  resize: none;
+  min-height: 44px;
+  max-height: 120px;
+  line-height: 1.4;
+  transition: border-color 0.15s;
+}
+#msg-input:focus { border-color: var(--border-hi); }
+#msg-input::placeholder { color: var(--text-dim); }
+
+#send-btn {
+  flex-shrink: 0;
+  width: 44px; height: 44px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  transition: background 0.15s, transform 0.1s;
+}
+#send-btn:hover  { background: #1e4a8e; }
+#send-btn:active { transform: scale(0.93); }
+#send-btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+
+/* ─── EOD BUTTON ─────────────────────────────────────────────── */
+#eod-btn {
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--cond);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: border-color 0.15s, color 0.15s;
+}
+#eod-btn:hover { border-color: var(--gold); color: var(--gold); }
+
+/* ─── SCROLLBAR (Firefox) ────────────────────────────────────── */
+#chat-wrap { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+#task-panel { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+/* ─── LOADING STATE ──────────────────────────────────────────── */
+#loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  transition: opacity 0.4s;
+}
+#loading-overlay.gone { opacity: 0; pointer-events: none; }
+
+.loader-inner {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: center;
+}
+.loader-bar {
+  width: 120px;
+  height: 2px;
+  background: var(--border);
+  margin: 12px auto 0;
+  position: relative;
+  overflow: hidden;
+}
+.loader-bar::after {
+  content: '';
+  position: absolute;
+  left: -40%;
+  top: 0; bottom: 0;
+  width: 40%;
+  background: var(--accent);
+  animation: slide 1.2s infinite ease-in-out;
+}
+@keyframes slide {
+  from { left: -40%; }
+  to   { left: 100%; }
+}
+</style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div id="loading-overlay">
+  <div class="loader-inner">
+    <div>INITIALISING LIFE MAP</div>
+    <div class="loader-bar"></div>
+  </div>
+</div>
+
+<div id="app">
+
+  <!-- STAT BAR -->
+  <div id="stat-bar">
+    <div class="stat-logo">Life Map</div>
+    <div class="stat-item">
+      <div class="mh-dot" id="mh-dot"></div>
+      <div class="stat-label">MH</div>
+      <div class="stat-value" id="stat-mh">—</div>
+      <div id="mode-badge">—</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">◈</div>
+      <div class="stat-value" id="stat-gold">—</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">🔥</div>
+      <div class="stat-value" id="stat-streak">—</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">XP</div>
+      <div class="stat-value" id="stat-xp">—</div>
+    </div>
+  </div>
+
+  <!-- TASK PANEL TOGGLE -->
+  <div id="task-header" onclick="toggleTaskPanel()">
+    <div class="task-header-left">
+      <span>▸ Today's Tasks</span>
+      <span id="task-count">0</span>
+    </div>
+    <span id="task-chevron">▾</span>
+  </div>
+  <div id="task-panel">
+    <div id="task-list"></div>
+  </div>
+
+  <!-- CHAT -->
+  <div id="chat-wrap"></div>
+
+  <!-- INPUT -->
+  <div id="input-bar">
+    <textarea id="msg-input" placeholder="log a task, add a task, ask anything…" rows="1"></textarea>
+    <button id="eod-btn" onclick="runEod()" title="End of Day">EOD</button>
+    <button id="send-btn" onclick="sendMessage()" title="Send">➤</button>
+  </div>
+
+</div>
+
+<script>
+// ─── CONFIG ────────────────────────────────────────────────────
+const API_BASE = "http://localhost:8000"; // change to deployed URL when hosted
+
+// ─── STATE ─────────────────────────────────────────────────────
+let playerState = {
+  mh_score:      null,
+  mh_mode:       null,
+  gold_balance:  null,
+  streak_count:  null,
+  total_xp:      null,
+  date:          new Date().toISOString().slice(0, 10),
+};
+let tasks = [];
+let taskPanelOpen = false;
+
+// ─── HELPERS ───────────────────────────────────────────────────
+function qs(sel) { return document.querySelector(sel); }
+
+function animStat(el, newVal) {
+  el.textContent = newVal ?? "—";
+  el.classList.remove("bump");
+  void el.offsetWidth; // reflow
+  el.classList.add("bump");
+  setTimeout(() => el.classList.remove("bump"), 300);
+}
+
+function updateStatBar(state) {
+  if (!state) return;
+  if (state.mh_score !== undefined && state.mh_score !== null) {
+    animStat(qs("#stat-mh"), state.mh_score);
+    const dot = qs("#mh-dot");
+    dot.style.background =
+      state.mh_score >= 80 ? "var(--mh-green)" :
+      state.mh_score >= 60 ? "var(--mh-amber)" : "var(--mh-red)";
+  }
+  if (state.mh_mode) {
+    const badge = qs("#mode-badge");
+    badge.textContent = state.mh_mode;
+    badge.style.color =
+      state.mh_mode === "Full"    ? "var(--mh-green)" :
+      state.mh_mode === "Reduced" ? "var(--mh-amber)" : "var(--mh-red)";
+    badge.style.background =
+      state.mh_mode === "Full"    ? "#0f2e20" :
+      state.mh_mode === "Reduced" ? "#3b2a05" : "#2e0f0f";
+  }
+  if (state.gold_balance !== undefined && state.gold_balance !== null)
+    animStat(qs("#stat-gold"), state.gold_balance);
+  if (state.streak_count !== undefined && state.streak_count !== null)
+    animStat(qs("#stat-streak"), state.streak_count);
+  if (state.total_xp !== undefined && state.total_xp !== null)
+    animStat(qs("#stat-xp"), state.total_xp);
+  Object.assign(playerState, state);
+}
+
+function applyStatDelta(delta) {
+  if (!delta) return;
+  if (delta.new_mh_score    !== undefined) playerState.mh_score     = delta.new_mh_score;
+  if (delta.new_gold_balance!== undefined) playerState.gold_balance  = delta.new_gold_balance;
+  updateStatBar({
+    mh_score:     playerState.mh_score,
+    gold_balance: playerState.gold_balance,
+    total_xp:     (playerState.total_xp ?? 0) + (delta.xp_earned ?? 0),
+  });
+  if (delta.xp_earned !== undefined) playerState.total_xp = (playerState.total_xp ?? 0) + delta.xp_earned;
+}
+
+function buildDeltaTags(delta) {
+  if (!delta) return "";
+  const parts = [];
+  if (delta.xp_earned)   parts.push(`<span class="delta-tag xp">+${delta.xp_earned} XP</span>`);
+  if (delta.gold_delta)   parts.push(`<span class="delta-tag gold">${delta.gold_delta > 0 ? "+" : ""}${delta.gold_delta} ◈</span>`);
+  if (delta.mh_delta) {
+    const cls = delta.mh_delta < 0 ? "mh neg" : "mh";
+    parts.push(`<span class="delta-tag ${cls}">${delta.mh_delta > 0 ? "+" : ""}${delta.mh_delta} MH</span>`);
+  }
+  if (parts.length === 0) return "";
+  return `<div class="delta-row">${parts.join("")}</div>`;
+}
+
+// ─── CHAT RENDERING ────────────────────────────────────────────
+function appendMsg(role, html, extraClass = "") {
+  const wrap = qs("#chat-wrap");
+  const div = document.createElement("div");
+  div.className = `msg ${role}${extraClass ? " " + extraClass : ""}`;
+  div.innerHTML = `<div class="bubble">${html}</div>`;
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+  return div;
+}
+
+function showTyping() {
+  const wrap = qs("#chat-wrap");
+  const div = document.createElement("div");
+  div.className = "msg system";
+  div.id = "typing-indicator";
+  div.innerHTML = `<div class="bubble typing-bubble"><span></span><span></span><span></span></div>`;
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function removeTyping() {
+  const t = qs("#typing-indicator");
+  if (t) t.remove();
+}
+
+// ─── TASK PANEL ─────────────────────────────────────────────────
+function renderTasks(taskList) {
+  tasks = taskList || [];
+  qs("#task-count").textContent = tasks.length;
+  const listEl = qs("#task-list");
+  listEl.innerHTML = "";
+  if (tasks.length === 0) {
+    listEl.innerHTML = `<div style="padding:12px 16px;color:var(--text-dim);font-size:13px;">No tasks scheduled for today.</div>`;
+    return;
+  }
+  tasks.forEach(t => {
+    const row = document.createElement("div");
+    row.className = "task-row";
+    const statusClass = t.status || "pending";
+    row.innerHTML = `
+      <div class="task-status ${statusClass}"></div>
+      <div class="task-name">${escHtml(t.name || t.task_name || "Unnamed task")}</div>
+      <div class="task-xp">${t.base_xp ? t.base_xp + " XP" : ""}</div>
+    `;
+    row.addEventListener("click", () => prefillTask(t.name || t.task_name || ""));
+    listEl.appendChild(row);
+  });
+}
+
+function prefillTask(name) {
+  const inp = qs("#msg-input");
+  inp.value = `Complete ${name}`;
+  inp.focus();
+  autoResize(inp);
+}
+
+function toggleTaskPanel() {
+  taskPanelOpen = !taskPanelOpen;
+  const panel = qs("#task-panel");
+  panel.classList.toggle("open", taskPanelOpen);
+}
+
+// ─── INIT / MORNING LOAD ───────────────────────────────────────
+async function init() {
+  try {
+    const res = await fetch(`${API_BASE}/morning`);
+    const data = await res.json();
+
+    // Extract player state from various shapes the orchestrator might return
+    const ps = data.player_state || data.state || data;
+    updateStatBar({
+      mh_score:     ps.mh_score,
+      mh_mode:      ps.mh_mode,
+      gold_balance: ps.gold_balance,
+      streak_count: ps.streak_count,
+      total_xp:     ps.total_xp,
+    });
+
+    // Tasks
+    const taskList = data.tasks || data.today_tasks || [];
+    renderTasks(taskList);
+
+    // Welcome message
+    const today = new Date().toLocaleDateString("en-GB", {weekday:"long", day:"numeric", month:"long"});
+    const mhPart = ps.mh_score != null ? ` MH ${ps.mh_score} · ${ps.mh_mode || ""} mode.` : "";
+    const taskPart = taskList.length ? ` ${taskList.length} task${taskList.length !== 1 ? "s" : ""} queued.` : " No tasks today.";
+    appendMsg("system", `[${today}]${mhPart}${taskPart}`, "welcome");
+
+    // Surface any briefing text
+    if (data.briefing || data.snapshot) {
+      const brief = data.briefing || data.snapshot;
+      if (typeof brief === "string" && brief.trim()) {
+        appendMsg("system", escHtml(brief));
+      }
+    }
+  } catch (err) {
+    appendMsg("system", "⚠ Could not reach the API. Is uvicorn running on port 8000?", "declined");
+  }
+
+  // Hide loader
+  const overlay = qs("#loading-overlay");
+  overlay.classList.add("gone");
+  setTimeout(() => overlay.remove(), 500);
+}
+
+// ─── SEND MESSAGE ──────────────────────────────────────────────
+async function sendMessage() {
+  const inp = qs("#msg-input");
+  const text = inp.value.trim();
+  if (!text) return;
+
+  inp.value = "";
+  autoResize(inp);
+  qs("#send-btn").disabled = true;
+
+  appendMsg("user", escHtml(text));
+  showTyping();
+
+  try {
+    const res = await fetch(`${API_BASE}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: text,
+        context: {
+          mh_score:     playerState.mh_score,
+          mh_mode:      playerState.mh_mode,
+          gold_balance: playerState.gold_balance,
+          streak_count: playerState.streak_count,
+          date:         playerState.date,
+        }
+      }),
+    });
+    const data = await res.json();
+    removeTyping();
+
+    const extraClass = data.declined ? "declined" : "";
+    const deltaHtml  = data.declined ? "" : buildDeltaTags(data.state_delta);
+    appendMsg("system", escHtml(data.reply) + deltaHtml, extraClass);
+
+    if (!data.declined && data.state_delta) {
+      applyStatDelta(data.state_delta);
+    }
+  } catch (err) {
+    removeTyping();
+    appendMsg("system", "⚠ Network error — check your API connection.", "declined");
+  }
+
+  qs("#send-btn").disabled = false;
+  inp.focus();
+}
+
+// ─── EOD ──────────────────────────────────────────────────────
+async function runEod() {
+  const btn = qs("#eod-btn");
+  btn.disabled = true;
+  appendMsg("user", "[Running End of Day…]");
+  showTyping();
+  try {
+    const res = await fetch(`${API_BASE}/eod`, { method: "POST" });
+    const data = await res.json();
+    removeTyping();
+    const summary = data.summary || data.reply || JSON.stringify(data, null, 2);
+    appendMsg("system", escHtml(typeof summary === "string" ? summary : JSON.stringify(summary)));
+    // Refresh stats after EOD
+    const stateRes = await fetch(`${API_BASE}/state`);
+    const stateData = await stateRes.json();
+    updateStatBar(stateData);
+  } catch (err) {
+    removeTyping();
+    appendMsg("system", "⚠ EOD failed — check your API connection.", "declined");
+  }
+  btn.disabled = false;
+}
+
+// ─── INPUT HELPERS ─────────────────────────────────────────────
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/\n/g, "<br>");
+}
+
+function autoResize(el) {
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, 120) + "px";
+}
+
+// ─── EVENTS ────────────────────────────────────────────────────
+qs("#msg-input").addEventListener("input", function() { autoResize(this); });
+
+qs("#msg-input").addEventListener("keydown", function(e) {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// ─── BOOT ──────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
