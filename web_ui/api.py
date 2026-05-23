@@ -620,109 +620,167 @@ TOOLS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Tool groups — sent selectively by message intent to cut token overhead
+# ---------------------------------------------------------------------------
+
+_TOOL_MAP = {t["function"]["name"]: t for t in TOOLS}
+
+# READ: pure data-fetch — no side effects.
+_TOOLS_READ = [_TOOL_MAP[n] for n in [
+    "get_tasks", "get_player_state", "get_active_arcs", "get_active_effects",
+    "get_task", "get_skill_links", "get_skills", "get_skill",
+    "get_arcs", "get_arc", "get_arc_tasks",
+    "get_effects", "get_effect",
+    "get_anchors", "get_snapshot", "get_streak_log",
+    "get_stats", "get_stat",
+]]
+
+# WRITE: daily-use mutations — always paired with READ so the model can
+# resolve IDs before writing.
+_TOOLS_WRITE = [_TOOL_MAP[n] for n in [
+    "complete_task", "create_task", "log_event", "end_day",
+    "create_effect", "update_effect",
+    "update_task", "delete_task",
+    "create_anchor", "manual_mh_adjust",
+    "create_arc", "update_arc",
+]]
+
+# ADMIN: structural / low-frequency — only sent on explicit admin intent.
+_TOOLS_ADMIN = [_TOOL_MAP[n] for n in [
+    "create_skill", "update_skill",
+    "link_arc_task", "link_arc_skill",
+    "generate_recurring_tasks",
+    "update_stat",
+    "create_skill_link", "delete_skill_link",
+]]
+
+
+def _select_tools(message: str) -> list:
+    """
+    Route to the minimal tool set for this message.
+
+    ADMIN  -> READ + WRITE + ADMIN  (38 tools — full set)
+    WRITE  -> READ + WRITE          (30 tools — saves ~20% schema tokens)
+    READ   -> READ only             (18 tools — saves ~55% schema tokens)
+
+    Ambiguous messages default to READ+WRITE (safe: read tools have no
+    side effects and the model needs them to resolve IDs before writing).
+    """
+    msg = message.lower()
+
+    _admin_signals = (
+        "recurring", "generate", "skill link", "link skill", "link arc",
+        "arc link", "unlink", "delete skill", "remove skill",
+        "update stat", "adjust stat",
+    )
+    if any(s in msg for s in _admin_signals):
+        return _TOOLS_READ + _TOOLS_WRITE + _TOOLS_ADMIN
+
+    _write_signals = (
+        "done", "complete", "finish", "add task", "create task",
+        "log ", "mark ", "reschedule", "move to", "delete task", "remove task",
+        "close day", "end day", "update", "change", "edit", "create arc",
+        "create effect", "new task", "add effect", "anchor",
+        "walked", "steps", "smoked", "drank", "day off", "cheat day",
+        "add ", "create ", "delete ", "remove ",
+    )
+    if any(s in msg for s in _write_signals):
+        return _TOOLS_READ + _TOOLS_WRITE
+
+    # Read-only heuristic: explicit question with a read keyword
+    _read_signals = (
+        "what", "show", "how ", "check", "list", "tell me", "see",
+        "streak", "stat", "skill", "arc", "effect", "buff", "debuff",
+        "goal", "snapshot", "history", "schedule", "player state",
+        "how am i", "how's my", "any tasks", "what's left",
+    )
+    if any(s in msg for s in _read_signals):
+        return _TOOLS_READ
+
+    # Default: READ+WRITE (handles casual completions, pronouns, ambiguous input)
+    return _TOOLS_READ + _TOOLS_WRITE
+
+
+# ---------------------------------------------------------------------------
 # System prompt — conversational tool-use mode
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are the Life Map assistant — a personal productivity companion who knows the user's life system and helps them manage it through natural conversation.
+SYSTEM_PROMPT = """You are the Life Map assistant. You manage the user's personal productivity system through natural conversation. You have no memory between sessions — everything you know comes from the context block and your tools.
 
-You have no memory between sessions. Everything you know comes from the context block at the top of each message and the tools available to you. Use the tools to get current data — never assume or invent state.
+Use tools silently. Never mention UUIDs, field names, table names, or enum values. Never describe what you're about to do — just do it.
 
-You have tools to read and write to the database. Use them silently — the user should never know a tool was called unless you're telling them what just happened.
+## Replies
 
-## How to respond
+One or two sentences. Warm, brief.
+After a write with rewards: "✓ [what happened] | +{xp} XP, +{gold} G"
+After a write without rewards: one plain confirmation sentence.
+After a read: answer the question naturally.
+Bad: "Task created successfully with priority P0, mandatory: true."
+Bad: "I have logged the event with event_type: steps."
 
-Be brief. Be warm. One or two sentences after a tool call is enough.
-After completing something: say what happened and the reward if there is one.
-After logging something: confirm it in plain language.
-After a read: just answer the question naturally.
+## Tool sequencing
 
-Good: "Added it for tomorrow — that's a P0 so I flagged it mandatory."
-Good: "✓ Gym done | +45 XP, +8 G. MH up a little."
-Good: "You've got 2 things today — gym and the bank visit."
-Bad: "Task created successfully with priority P0, mandatory: true, late_rule: Hard."
-Bad: "I have logged the event with event_type: steps, quantity: 8000."
+completing a task — always 2 steps:
+  1. get_tasks(date, mh_mode) → find the matching task by name
+  2. complete_task(task_id, ...)
+Never call complete_task with a guessed ID.
 
-Never mention UUIDs, field names, table names, or enum values in replies.
+update_task / delete_task — always 2 steps:
+  1. get_tasks(date, mh_mode) → find the task ID
+  2. update_task(task_id, ...) or delete_task(task_id)
 
-## Tool sequencing — mandatory rules
+reading a specific item by name — find ID via list tool first, then detail tool if needed.
 
-Completing a task is ALWAYS two steps. No exceptions:
-  Step 1: call get_tasks(date, mh_mode) to get the task list and find the matching task ID
-  Step 2: call complete_task(task_id, ...) using the ID from step 1
-Never call complete_task with a guessed or invented task_id. If get_tasks returns nothing, tell the user the task wasn't found and ask them to check the name.
+## Read tool routing
 
-Reading a specific item is ALWAYS two steps when you only have a name:
-  First call the list tool (get_tasks, get_skills, get_arcs, get_effects) to find the ID
-  Then call the detail tool (get_task, get_skill, get_arc, get_effect) if you need full detail
+"tasks today" / "what's left"   → get_tasks(today, mh_mode)
+"tasks tomorrow" / "and tomorrow?" → get_tasks(tomorrow, mh_mode)
+"skill tree" / "my skills"       → get_skills()
+"stat check" / "my stats"        → get_stats()
+"how am I doing"                 → get_player_state()
+"my goals" / "arcs"              → get_arcs()
+"active buffs"                   → get_active_effects()
+"streak"                         → get_streak_log()
+"what's scheduled"               → get_anchors(date)
 
-When to use which read tool:
-- "tasks today" / "what's left" → get_tasks(today, mh_mode)
-- "tasks tomorrow" / "and tomorrow?" → get_tasks(tomorrow, mh_mode)
-- "skill tree" / "my skills" → get_skills()
-- "stat check" / "my stats" → get_stats()
-- "how am I doing" / "player state" → get_player_state()
-- "my goals" / "arcs" → get_arcs()
-- "active buffs" / "effects" → get_active_effects()
-- "streak" / "recent performance" → get_streak_log()
-- "anchors today" / "what's scheduled" → get_anchors(date)
+## Inference defaults
 
-## Inference rules
+Priority → P1 | Energy → Medium | Time block → Flexible | XP → 30 | Gold → 5
+Late rule → Soft, Penalty | Mandatory → false
+"must do" / "without fail" / "no matter what" → mandatory: true, P0, Hard
+"tomorrow" → tomorrow's date | "tonight" → Evening, today | "this week" → end of week
+Category → infer (gym=Health, reading=Hobby, email=Work, cooking=Maintenance, etc.)
+Type → Optional for one-off, Daily if habitual, Recurring if pattern described
 
-When something is missing or ambiguous, infer and proceed — don't ask unless it's genuinely unclear or high-stakes (like deleting something).
+Completion timing:
+"half" / "rough session" / "only part" → partial_credit: 0.5
+"late" / "just got to it" → soft timing
+"missed it" / "didn't do it" → don't complete — offer defer or delete
 
-Task defaults when not stated:
-- Priority → P1
-- Energy → Medium
-- Time block → Flexible
-- XP → 30, Gold → 5
-- Late rule → Soft, Penalty
-- Mandatory → false
-- "without fail" / "must do" / "no matter what" → mandatory: true, P0, Hard late rule
-- "tomorrow" → tomorrow's date
-- "tonight" → Evening block, today's date
-- "this week" → end of current week
-- Category → infer from context (gym = Health, reading = Hobby, email = Work, etc.)
-- Type not stated → Optional for one-off tasks, Daily if it sounds habitual ("every morning", "daily"), Recurring if a pattern is described
-
-Completion defaults when not stated:
-- Timing → on_time
-- Credit → 1.0 (full)
-- "half", "only did part", "tired", "rough session" → partial_credit: 0.5
-- "late", "just got to it" → soft timing
-- "missed it", "didn't do it" → don't complete, offer to defer or delete
-
-Task name matching — when scanning get_tasks results:
-- Match on key terms only. Ignore filler words like "task", "the", "my", "thing", "complete".
-- "gym" matches "Morning gym session". "ssn thing" matches "SSN support letter".
-- "Complete gym" → strip "Complete", match on "gym".
-- If multiple tasks match, pick the closest. If genuinely ambiguous, ask.
+Task name matching:
+Strip filler words (task, the, my, thing, complete, it). "gym" → "Morning gym session". "ssn thing" → "SSN support letter".
+If multiple match, pick closest. If genuinely ambiguous, ask.
 
 Pronoun resolution:
-- If the user says "it", "that task", "the one I just added" — resolve to last_action if available in context.
-- Do NOT call get_tasks to resolve a pronoun if last_action is present — use its ID directly.
+"it" / "that task" / "the one I just added" → resolve from [Last action] in context. Do NOT call get_tasks to resolve a pronoun if last_action is present.
 
 ## Closing the day
 
-end_day is irreversible. Before calling it, confirm with the user in one line:
-"Close the day? This can't be undone."
-Only call end_day after they say yes (or equivalent — "yeah", "do it", "go ahead").
-After end_day completes, always call get_player_state and include the streak result in your reply.
-Example: "Day closed. Streak's at 4 — mandatory done. Sleep well."
+end_day is irreversible. Always confirm first: "Close the day? This can't be undone."
+Call end_day only after explicit yes. After it completes, call get_player_state and include the streak in your reply.
 
-## If something fails
+## Errors
 
-If a tool returns an error or task not found:
-- For task not found: try rephrasing internally — call get_tasks again and look harder. Only tell the user if you still can't find it after checking.
-- For other errors: say so plainly in one sentence. Don't invent a workaround.
+Task not found: call get_tasks again and look harder. Tell the user only if still not found.
+Other errors: one plain sentence. No invented workarounds.
 
-## What you don't do
+## Never
 
-- Don't guess or invent IDs — always resolve via a list tool first
-- Don't ask clarifying questions for low-stakes inputs — just infer
-- Don't describe what you're about to do — just do it
-- Don't repeat the user's words back to them
-- Don't offer a list of options unless the user is genuinely stuck
-- Don't end every message with "Let me know if you need anything!"
+- Guess or invent IDs
+- Ask for clarification on low-stakes inputs — infer and proceed
+- Repeat the user's words back
+- Offer options lists unless the user is stuck
+- End with "Let me know if you need anything!"
 """
 
 # ---------------------------------------------------------------------------
@@ -800,8 +858,8 @@ def _execute_tool(name: str, args: dict) -> dict:
             "type": a.get("effect_type", a.get("type")),
         }),
         "update_effect":             lambda a: update_effect(a["effect_id"], a["updates"]),
-        "update_task":               lambda a: update_task(a["task_id"], a["updates"]),
-        "delete_task":               lambda a: delete_task(a["task_id"]),
+        "update_task":               lambda a: _exec_with_resolved_id(update_task, a["task_id"], a["updates"]),
+        "delete_task":               lambda a: _exec_with_resolved_id(delete_task, a["task_id"]),
         "generate_recurring_tasks":  lambda a: generate_recurring_tasks(a["date"]),
         "create_anchor":             lambda a: create_anchor(a),
         "update_stat":        lambda a: update_stat(a["stat_id"], a["delta"]),
@@ -825,6 +883,43 @@ def _execute_tool(name: str, args: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# _resolve_task_id — shared ID validation for any task mutation
+# ---------------------------------------------------------------------------
+
+def _resolve_task_id(task_id: str) -> tuple:
+    """
+    Validate task_id against today's live task list (MH mode bypassed — CORE-001).
+    Returns (validated_id, None) on success.
+    Returns (None, error_dict) on failure — error_dict contains the task list so
+    the model can find the correct ID and retry in the same tool-call loop.
+    """
+    from scripts.reads import get_tasks
+    from datetime import date as _date
+
+    today = _date.today().isoformat()
+    tasks = get_tasks(today, "Normal")
+    valid_ids = {t["id"] for t in tasks}
+
+    if task_id in valid_ids:
+        return task_id, None
+
+    return None, {
+        "error":           "task_id_not_found",
+        "message":         "No task with that ID in today's list. Here are today's tasks:",
+        "available_tasks": [{"id": t["id"], "task": t["task"]} for t in tasks],
+    }
+
+
+def _exec_with_resolved_id(fn, task_id: str, *extra_args):
+    """Call fn(task_id, *extra_args) only after validating task_id via _resolve_task_id."""
+    resolved_id, err = _resolve_task_id(task_id)
+    if err:
+        return err
+    return fn(resolved_id, *extra_args)
+
+
 # _resolve_and_complete — bypass MH filter for task completion (CORE-001)
 # ---------------------------------------------------------------------------
 
@@ -835,34 +930,21 @@ def _resolve_and_complete(args: dict) -> dict:
     so MH energy filtering cannot hide a task the user wants to complete.
     (CORE-001: task completion is an explicit user action — MH gating must not block it.)
     """
-    from scripts.reads import get_tasks, get_player_state
+    from scripts.reads import get_player_state
     from scripts.writes import complete_task
-    from datetime import date as _date
 
     task_id         = args.get("task_id", "")
     completion_time = args.get("completion_time", "on_time")
     partial_credit  = float(args.get("partial_credit", 1.0))
 
-    # Read live mh_mode for the completion_data arg (informational only)
+    resolved_id, err = _resolve_task_id(task_id)
+    if err:
+        return err
+
     ps      = get_player_state()
     mh_mode = ps.get("mh_mode", "Normal")
 
-    today = _date.today().isoformat()
-    # CORE-001: always bypass MH filter when looking up tasks for completion
-    tasks = get_tasks(today, "Normal")
-
-    valid_ids = {t["id"] for t in tasks}
-
-    if task_id not in valid_ids:
-        # ID is wrong or hallucinated — return the real task list so the
-        # model can find the correct ID and retry within the same loop
-        return {
-            "error":           "task_id_not_found",
-            "message":         "No task with that ID in today's list. Here are today's tasks:",
-            "available_tasks": [{"id": t["id"], "task": t["task"]} for t in tasks],
-        }
-
-    return complete_task(task_id, {
+    return complete_task(resolved_id, {
         "completion_time": completion_time,
         "partial_credit":  partial_credit,
         "mh_mode":         mh_mode,
@@ -1020,9 +1102,9 @@ def chat(req: ChatRequest):
             response = _groq_client.chat.completions.create(
                 model=_model,
                 messages=messages,
-                tools=TOOLS,
+                tools=_select_tools(req.message),
                 tool_choice="auto",
-                temperature=0.3,
+                temperature=0.15,
                 max_tokens=1024,
             )
 
