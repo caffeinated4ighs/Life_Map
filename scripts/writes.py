@@ -490,7 +490,7 @@ def create_task(task_data: dict) -> dict:
                 sb.table("task_stats").insert({
                     "task_id": task_id,
                     "stat_id": stat_link["stat_id"],
-                    "delta": stat_link.get("delta", 0),
+                    "stat_delta": stat_link.get("stat_delta", stat_link.get("delta", 0)),
                 }).execute()
             except Exception:
                 # Table doesn't exist yet — silently skip
@@ -627,8 +627,8 @@ def end_day(date: str) -> dict:
             .execute()
         )
         mandatory_tasks = mandatory_res.data or []
-        mandatory_met = any(t["status"] == "Done" for t in mandatory_tasks) if mandatory_tasks else False
-
+        mandatory_met = all(t["status"] == "Done" for t in mandatory_tasks) if mandatory_tasks else True
+        
         # 4. New streak count
         current_streak = ps.get("streak_count", 0)
         new_streak = current_streak + 1 if mandatory_met else 0
