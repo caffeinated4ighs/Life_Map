@@ -110,6 +110,9 @@ score < 40  → "Recovery Only"
 ---
 
 EXAMPLES:
+"what are my tasks today" → {"action": "get_tasks", "args": {"date": "...", "mh_mode": "..."}}
+"show my stats" → {"action": "get_player_state", "args": {}}
+"any active arcs?" → {"action": "get_active_arcs", "args": {}}
 
 Instruction: "Get player state"
 {"action": "get_player_state", "args": {}}
@@ -119,3 +122,5 @@ Instruction: "Complete task 3f2a1b00-0000-0000-0000-000000000001 on time with fu
 
 Instruction: "What should I do today?"
 {"action": "error", "args": {"reason": "out of scope"}}
+
+"what are my tasks today" → {"action": "get_tasks", "args": {"date": "2026-05-23", "mh_mode": "Reduced"}}

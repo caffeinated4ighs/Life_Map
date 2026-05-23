@@ -655,32 +655,30 @@ async function init() {
     const res = await fetch(`${API_BASE}/morning`);
     const data = await res.json();
 
-    // Extract player state from various shapes the orchestrator might return
-    const ps = data.player_state || data.state || data;
-    updateStatBar({
-      mh_score:     ps.mh_score,
-      mh_mode:      ps.mh_mode,
-      gold_balance: ps.gold_balance,
-      streak_count: ps.streak_count,
-      total_xp:     ps.total_xp,
-    });
+    if (!res.ok) {
+      // API returned an error — show the detail so it's debuggable
+      const detail = data.detail || JSON.stringify(data);
+      appendMsg("system", `⚠ /morning error (${res.status}): ${escHtml(detail)}`, "declined");
+    } else {
+      // run_morning returns: {date, snapshot, player_state, tasks, active_arcs, active_effects}
+      const ps = data.player_state || {};
+      updateStatBar({
+        mh_score:     ps.mh_score,
+        mh_mode:      ps.mh_mode,
+        gold_balance: ps.gold_balance,
+        streak_count: ps.streak_count,
+        total_xp:     ps.total_xp,
+      });
 
-    // Tasks
-    const taskList = data.tasks || data.today_tasks || [];
-    renderTasks(taskList);
+      // Tasks
+      const taskList = data.tasks || [];
+      renderTasks(taskList);
 
-    // Welcome message
-    const today = new Date().toLocaleDateString("en-GB", {weekday:"long", day:"numeric", month:"long"});
-    const mhPart = ps.mh_score != null ? ` MH ${ps.mh_score} · ${ps.mh_mode || ""} mode.` : "";
-    const taskPart = taskList.length ? ` ${taskList.length} task${taskList.length !== 1 ? "s" : ""} queued.` : " No tasks today.";
-    appendMsg("system", `[${today}]${mhPart}${taskPart}`, "welcome");
-
-    // Surface any briefing text
-    if (data.briefing || data.snapshot) {
-      const brief = data.briefing || data.snapshot;
-      if (typeof brief === "string" && brief.trim()) {
-        appendMsg("system", escHtml(brief));
-      }
+      // Welcome message
+      const today = new Date().toLocaleDateString("en-GB", {weekday:"long", day:"numeric", month:"long"});
+      const mhPart = ps.mh_score != null ? ` MH ${ps.mh_score} · ${ps.mh_mode || ""} mode.` : "";
+      const taskPart = taskList.length ? ` ${taskList.length} task${taskList.length !== 1 ? "s" : ""} queued.` : " No tasks today.";
+      appendMsg("system", `[${today}]${mhPart}${taskPart}`, "welcome");
     }
   } catch (err) {
     appendMsg("system", "⚠ Could not reach the API. Is uvicorn running on port 8000?", "declined");
@@ -723,11 +721,16 @@ async function sendMessage() {
     const data = await res.json();
     removeTyping();
 
-    const extraClass = data.declined ? "declined" : "";
-    const deltaHtml  = data.declined ? "" : buildDeltaTags(data.state_delta);
-    appendMsg("system", escHtml(data.reply) + deltaHtml, extraClass);
+    if (!res.ok) {
+      const detail = data.detail || JSON.stringify(data);
+      appendMsg("system", `⚠ Error (${res.status}): ${escHtml(detail)}`, "declined");
+    } else {
+      const extraClass = data.declined ? "declined" : "";
+      const deltaHtml  = data.declined ? "" : buildDeltaTags(data.state_delta);
+      appendMsg("system", escHtml(data.reply || "(no reply)") + deltaHtml, extraClass);
+    }
 
-    if (!data.declined && data.state_delta) {
+    if (res.ok && !data.declined && data.state_delta) {
       applyStatDelta(data.state_delta);
     }
   } catch (err) {
