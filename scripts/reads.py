@@ -449,3 +449,374 @@ def get_active_arcs() -> list[dict]:
     except Exception as exc:
         _log_error("get_active_arcs", exc)
         return []
+
+# ---------------------------------------------------------------------------
+# get_skills
+# ---------------------------------------------------------------------------
+
+def get_skills() -> list[dict]:
+    """
+    Return all skills ordered by skill name.
+    """
+    try:
+        sb = get_client()
+        res = (
+            sb.table("skills")
+            .select(
+                "id, skill, current_level, xp_accumulated, xp_to_next_level, "
+                "decay_rate, last_active, in_decay, primary_stat_id, secondary_stat_id"
+            )
+            .order("skill")
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        _log_error("get_skills", exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# get_skill
+# ---------------------------------------------------------------------------
+
+def get_skill(skill_id: str) -> dict:
+    """
+    Return a single skill by UUID. Return {} if not found.
+    """
+    try:
+        sb = get_client()
+        res = (
+            sb.table("skills")
+            .select(
+                "id, skill, current_level, xp_accumulated, xp_to_next_level, "
+                "decay_rate, last_active, in_decay, primary_stat_id, secondary_stat_id"
+            )
+            .eq("id", skill_id)
+            .execute()
+        )
+        data = res.data or []
+        return data[0] if data else {}
+    except Exception as exc:
+        _log_error("get_skill", exc)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# get_arcs
+# ---------------------------------------------------------------------------
+
+def get_arcs() -> list[dict]:
+    """
+    Return all arcs regardless of status, ordered by start_date desc.
+    """
+    try:
+        sb = get_client()
+        res = (
+            sb.table("arcs")
+            .select("id, arc, status, weight, start_date, end_date")
+            .order("start_date", desc=True)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        _log_error("get_arcs", exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# get_arc
+# ---------------------------------------------------------------------------
+
+def get_arc(arc_id: str) -> dict:
+    """
+    Return a single arc by UUID with its linked tasks and linked skills.
+    Return {} if not found.
+    """
+    try:
+        sb = get_client()
+
+        res = (
+            sb.table("arcs")
+            .select("id, arc, status, weight, start_date, end_date")
+            .eq("id", arc_id)
+            .execute()
+        )
+        data = res.data or []
+        if not data:
+            return {}
+        arc = data[0]
+
+        # Linked tasks
+        task_res = (
+            sb.table("arc_tasks")
+            .select("task_id, tasks(task, status)")
+            .eq("arc_id", arc_id)
+            .execute()
+        )
+        tasks = []
+        for row in task_res.data or []:
+            task_data = row.get("tasks") or {}
+            tasks.append({
+                "task_id": row["task_id"],
+                "task": task_data.get("task"),
+                "status": task_data.get("status"),
+            })
+
+        # Linked skills
+        skill_res = (
+            sb.table("arc_skills")
+            .select("skill_id, skills(skill)")
+            .eq("arc_id", arc_id)
+            .execute()
+        )
+        skills = []
+        for row in skill_res.data or []:
+            skill_data = row.get("skills") or {}
+            skills.append({
+                "skill_id": row["skill_id"],
+                "skill": skill_data.get("skill"),
+            })
+
+        arc["tasks"] = tasks
+        arc["skills"] = skills
+        return arc
+    except Exception as exc:
+        _log_error("get_arc", exc)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# get_arc_tasks
+# ---------------------------------------------------------------------------
+
+def get_arc_tasks(arc_id: str) -> list[dict]:
+    """
+    Return all tasks linked to a given arc.
+    """
+    try:
+        sb = get_client()
+        res = (
+            sb.table("arc_tasks")
+            .select("task_id, tasks(task, status, date, priority)")
+            .eq("arc_id", arc_id)
+            .execute()
+        )
+        result = []
+        for row in res.data or []:
+            task_data = row.get("tasks") or {}
+            result.append({
+                "task_id": row["task_id"],
+                "task": task_data.get("task"),
+                "status": task_data.get("status"),
+                "date": task_data.get("date"),
+                "priority": task_data.get("priority"),
+            })
+        return result
+    except Exception as exc:
+        _log_error("get_arc_tasks", exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# get_effects
+# ---------------------------------------------------------------------------
+
+def get_effects() -> list[dict]:
+    """
+    Return all effects (active and inactive), ordered by created_on desc.
+    """
+    try:
+        sb = get_client()
+        res = (
+            sb.table("effects")
+            .select(
+                "id, effect, type, intensity, active, suppresses_arc_pressure, "
+                "duration_days, created_on, expires_on, stat_offset"
+            )
+            .order("created_on", desc=True)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        _log_error("get_effects", exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# get_effect
+# ---------------------------------------------------------------------------
+
+def get_effect(effect_id: str) -> dict:
+    """
+    Return a single effect by UUID with its linked stats and linked arcs.
+    Return {} if not found.
+    """
+    try:
+        sb = get_client()
+
+        res = (
+            sb.table("effects")
+            .select(
+                "id, effect, type, intensity, active, suppresses_arc_pressure, "
+                "duration_days, created_on, expires_on, stat_offset"
+            )
+            .eq("id", effect_id)
+            .execute()
+        )
+        data = res.data or []
+        if not data:
+            return {}
+        effect = data[0]
+
+        # Linked stats
+        stat_res = (
+            sb.table("effect_stats")
+            .select("stat_id, stats(stat)")
+            .eq("effect_id", effect_id)
+            .execute()
+        )
+        linked_stats = []
+        for row in stat_res.data or []:
+            stat_data = row.get("stats") or {}
+            linked_stats.append({
+                "stat_id": row["stat_id"],
+                "stat": stat_data.get("stat"),
+            })
+
+        # Linked arcs
+        arc_res = (
+            sb.table("effect_arcs")
+            .select("arc_id, arcs(arc)")
+            .eq("effect_id", effect_id)
+            .execute()
+        )
+        linked_arcs = []
+        for row in arc_res.data or []:
+            arc_data = row.get("arcs") or {}
+            linked_arcs.append({
+                "arc_id": row["arc_id"],
+                "arc": arc_data.get("arc"),
+            })
+
+        effect["linked_stats"] = linked_stats
+        effect["linked_arcs"] = linked_arcs
+        return effect
+    except Exception as exc:
+        _log_error("get_effect", exc)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# get_anchors
+# ---------------------------------------------------------------------------
+
+def get_anchors(date: str) -> list[dict]:
+    """
+    Return all anchors for a given date.
+    """
+    try:
+        sb = get_client()
+        res = (
+            sb.table("anchors")
+            .select("id, anchor, type, date, time, priority_pressure")
+            .eq("date", date)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        _log_error("get_anchors", exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# get_snapshot
+# ---------------------------------------------------------------------------
+
+def get_snapshot(date: str) -> dict:
+    """
+    Return the day_snapshots row for a given date. Return {} if none exists.
+    """
+    try:
+        sb = get_client()
+        res = (
+            sb.table("day_snapshots")
+            .select(
+                "id, date, mh_score_open, mh_score_close, mh_mode, "
+                "gold_open, gold_close, xp_earned, steps"
+            )
+            .eq("date", date)
+            .execute()
+        )
+        data = res.data or []
+        return data[0] if data else {}
+    except Exception as exc:
+        _log_error("get_snapshot", exc)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# get_streak_log
+# ---------------------------------------------------------------------------
+
+def get_streak_log(limit: int = 7) -> list[dict]:
+    """
+    Return the most recent `limit` rows from streak_log, ordered by date desc.
+    """
+    try:
+        sb = get_client()
+        res = (
+            sb.table("streak_log")
+            .select("date, streak_count, mandatory_met")
+            .order("date", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        _log_error("get_streak_log", exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# get_stats
+# ---------------------------------------------------------------------------
+
+def get_stats() -> list[dict]:
+    """
+    Return all stat rows ordered by stat name.
+    """
+    try:
+        sb = get_client()
+        res = (
+            sb.table("stats")
+            .select("id, stat, current_value, last_updated")
+            .order("stat")
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        _log_error("get_stats", exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# get_stat
+# ---------------------------------------------------------------------------
+
+def get_stat(stat_id: str) -> dict:
+    """
+    Return a single stat by UUID. Return {} if not found.
+    """
+    try:
+        sb = get_client()
+        res = (
+            sb.table("stats")
+            .select("id, stat, current_value, last_updated")
+            .eq("id", stat_id)
+            .execute()
+        )
+        data = res.data or []
+        return data[0] if data else {}
+    except Exception as exc:
+        _log_error("get_stat", exc)
+        return {}

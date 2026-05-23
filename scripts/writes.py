@@ -654,3 +654,545 @@ def end_day(date: str) -> dict:
         }
     except Exception as exc:
         return _err("end_day", exc)
+
+# ---------------------------------------------------------------------------
+# create_skill
+# ---------------------------------------------------------------------------
+
+def create_skill(skill_data: dict) -> dict:
+    """
+    Insert a new skill row.
+
+    Required: skill, primary_stat_id, xp_to_next_level.
+    Optional: secondary_stat_id, decay_rate, current_level, xp_accumulated.
+    Returns {success: True, skill_id: str} on success.
+    """
+    try:
+        sb = get_client()
+
+        row = {
+            "skill":            skill_data["skill"],
+            "primary_stat_id":  skill_data["primary_stat_id"],
+            "xp_to_next_level": skill_data["xp_to_next_level"],
+            "current_level":    skill_data.get("current_level", 1),
+            "xp_accumulated":   skill_data.get("xp_accumulated", 0),
+        }
+        for optional in ("secondary_stat_id", "decay_rate"):
+            if optional in skill_data:
+                row[optional] = skill_data[optional]
+
+        res = sb.table("skills").insert(row).execute()
+        if not res.data:
+            return {"success": False, "error": "failed to insert skill"}
+        return {"success": True, "skill_id": res.data[0]["id"]}
+    except Exception as exc:
+        return _err("create_skill", exc)
+
+
+# ---------------------------------------------------------------------------
+# update_skill
+# ---------------------------------------------------------------------------
+
+_SKILL_MUTABLE = {
+    "skill", "current_level", "xp_accumulated", "xp_to_next_level",
+    "decay_rate", "last_active", "in_decay", "secondary_stat_id",
+}
+
+
+def update_skill(skill_id: str, updates: dict) -> dict:
+    """
+    Patch mutable fields on a skill row.
+    primary_stat_id and id are not allowed.
+    Returns {success: True} on success.
+    """
+    try:
+        sb = get_client()
+
+        safe = {k: v for k, v in updates.items() if k in _SKILL_MUTABLE}
+        if not safe:
+            return {"success": False, "error": "no valid update fields provided"}
+
+        res = sb.table("skills").update(safe).eq("id", skill_id).execute()
+        if res.data is None:
+            return {"success": False, "error": "update returned no data"}
+        return {"success": True}
+    except Exception as exc:
+        return _err("update_skill", exc)
+
+
+# ---------------------------------------------------------------------------
+# create_arc
+# ---------------------------------------------------------------------------
+
+def create_arc(arc_data: dict) -> dict:
+    """
+    Insert a new arc row.
+
+    Required: arc.
+    Optional: weight, start_date, end_date, status (default Active).
+    Returns {success: True, arc_id: str} on success.
+    """
+    try:
+        sb = get_client()
+
+        row = {
+            "arc":    arc_data["arc"],
+            "status": arc_data.get("status", "Active"),
+        }
+        for optional in ("weight", "start_date", "end_date"):
+            if optional in arc_data:
+                row[optional] = arc_data[optional]
+
+        res = sb.table("arcs").insert(row).execute()
+        if not res.data:
+            return {"success": False, "error": "failed to insert arc"}
+        return {"success": True, "arc_id": res.data[0]["id"]}
+    except Exception as exc:
+        return _err("create_arc", exc)
+
+
+# ---------------------------------------------------------------------------
+# update_arc
+# ---------------------------------------------------------------------------
+
+_ARC_MUTABLE = {"arc", "status", "weight", "start_date", "end_date"}
+
+
+def update_arc(arc_id: str, updates: dict) -> dict:
+    """
+    Patch mutable fields on an arc row.
+    Returns {success: True} on success.
+    """
+    try:
+        sb = get_client()
+
+        safe = {k: v for k, v in updates.items() if k in _ARC_MUTABLE}
+        if not safe:
+            return {"success": False, "error": "no valid update fields provided"}
+
+        res = sb.table("arcs").update(safe).eq("id", arc_id).execute()
+        if res.data is None:
+            return {"success": False, "error": "update returned no data"}
+        return {"success": True}
+    except Exception as exc:
+        return _err("update_arc", exc)
+
+
+# ---------------------------------------------------------------------------
+# link_arc_task
+# ---------------------------------------------------------------------------
+
+def link_arc_task(arc_id: str, task_id: str) -> dict:
+    """
+    Insert a row into arc_tasks. Idempotent — success if link already exists.
+    Returns {success: True} on success.
+    """
+    try:
+        sb = get_client()
+
+        existing = (
+            sb.table("arc_tasks")
+            .select("arc_id")
+            .eq("arc_id", arc_id)
+            .eq("task_id", task_id)
+            .execute()
+        )
+        if existing.data:
+            return {"success": True}
+
+        res = sb.table("arc_tasks").insert({"arc_id": arc_id, "task_id": task_id}).execute()
+        if not res.data:
+            return {"success": False, "error": "failed to insert arc_task link"}
+        return {"success": True}
+    except Exception as exc:
+        return _err("link_arc_task", exc)
+
+
+# ---------------------------------------------------------------------------
+# link_arc_skill
+# ---------------------------------------------------------------------------
+
+def link_arc_skill(arc_id: str, skill_id: str) -> dict:
+    """
+    Insert a row into arc_skills. Idempotent — success if link already exists.
+    Returns {success: True} on success.
+    """
+    try:
+        sb = get_client()
+
+        existing = (
+            sb.table("arc_skills")
+            .select("arc_id")
+            .eq("arc_id", arc_id)
+            .eq("skill_id", skill_id)
+            .execute()
+        )
+        if existing.data:
+            return {"success": True}
+
+        res = sb.table("arc_skills").insert({"arc_id": arc_id, "skill_id": skill_id}).execute()
+        if not res.data:
+            return {"success": False, "error": "failed to insert arc_skill link"}
+        return {"success": True}
+    except Exception as exc:
+        return _err("link_arc_skill", exc)
+
+
+# ---------------------------------------------------------------------------
+# update_effect
+# ---------------------------------------------------------------------------
+
+_EFFECT_MUTABLE = {
+    "effect", "active", "intensity", "stat_offset",
+    "suppresses_arc_pressure", "expires_on",
+}
+
+
+def update_effect(effect_id: str, updates: dict) -> dict:
+    """
+    Patch mutable fields on an effect row.
+    Returns {success: True} on success.
+    """
+    try:
+        sb = get_client()
+
+        safe = {k: v for k, v in updates.items() if k in _EFFECT_MUTABLE}
+        if not safe:
+            return {"success": False, "error": "no valid update fields provided"}
+
+        res = sb.table("effects").update(safe).eq("id", effect_id).execute()
+        if res.data is None:
+            return {"success": False, "error": "update returned no data"}
+        return {"success": True}
+    except Exception as exc:
+        return _err("update_effect", exc)
+
+
+# ---------------------------------------------------------------------------
+# update_task
+# ---------------------------------------------------------------------------
+
+_TASK_MUTABLE = {
+    "task", "type", "status", "priority", "category", "date",
+    "energy_cost", "late_rule", "late_rule_behavior", "mandatory",
+    "blocked", "deferred", "xp", "gold", "mh_impact", "time_block",
+    "recurring_rule", "impact_notes",
+}
+
+
+def update_task(task_id: str, updates: dict) -> dict:
+    """
+    Patch mutable fields on a task row.
+    id, resolved_xp, resolved_gold, streak_xp, anchor_override, anchor_id are protected.
+    Returns {success: True} on success.
+    """
+    try:
+        sb = get_client()
+
+        safe = {k: v for k, v in updates.items() if k in _TASK_MUTABLE}
+        if not safe:
+            return {"success": False, "error": "no valid update fields provided"}
+
+        res = sb.table("tasks").update(safe).eq("id", task_id).execute()
+        if res.data is None:
+            return {"success": False, "error": "update returned no data"}
+        return {"success": True}
+    except Exception as exc:
+        return _err("update_task", exc)
+
+
+# ---------------------------------------------------------------------------
+# delete_task
+# ---------------------------------------------------------------------------
+
+def delete_task(task_id: str) -> dict:
+    """
+    Soft delete: set deferred=true, status='Not started'.
+    Refuses to delete a task whose status is already 'Done'.
+    Returns {success: True} on success.
+    """
+    try:
+        sb = get_client()
+
+        task_res = (
+            sb.table("tasks")
+            .select("status")
+            .eq("id", task_id)
+            .execute()
+        )
+        data = task_res.data or []
+        if not data:
+            return {"success": False, "error": "task not found"}
+
+        if data[0]["status"] == "Done":
+            return {"success": False, "error": "cannot delete a completed task"}
+
+        res = (
+            sb.table("tasks")
+            .update({"deferred": True, "status": "Not started"})
+            .eq("id", task_id)
+            .execute()
+        )
+        if res.data is None:
+            return {"success": False, "error": "update returned no data"}
+        return {"success": True}
+    except Exception as exc:
+        return _err("delete_task", exc)
+
+
+# ---------------------------------------------------------------------------
+# create_anchor
+# ---------------------------------------------------------------------------
+
+def create_anchor(anchor_data: dict) -> dict:
+    """
+    Insert a new anchor row.
+
+    Required: anchor, date.
+    Optional: type, time, priority_pressure.
+    Returns {success: True, anchor_id: str} on success.
+    """
+    try:
+        sb = get_client()
+
+        row = {
+            "anchor": anchor_data["anchor"],
+            "date":   anchor_data["date"],
+        }
+        for optional in ("type", "time", "priority_pressure"):
+            if optional in anchor_data:
+                row[optional] = anchor_data[optional]
+
+        res = sb.table("anchors").insert(row).execute()
+        if not res.data:
+            return {"success": False, "error": "failed to insert anchor"}
+        return {"success": True, "anchor_id": res.data[0]["id"]}
+    except Exception as exc:
+        return _err("create_anchor", exc)
+
+
+# ---------------------------------------------------------------------------
+# generate_recurring_tasks
+# ---------------------------------------------------------------------------
+
+def generate_recurring_tasks(date: str) -> dict:
+    """
+    For each task with recurring_rule IS NOT NULL, status='Done', date=yesterday,
+    create a new task row for `date` with status='Not started' and cleared reward fields.
+    Skip if a task with the same name already exists for `date`.
+    Returns {success: True, created: int}.
+    """
+    try:
+        sb = get_client()
+
+        yesterday = (date_type.fromisoformat(date) - timedelta(days=1)).isoformat()
+
+        done_res = (
+            sb.table("tasks")
+            .select(
+                "task, type, priority, category, energy_cost, late_rule, "
+                "late_rule_behavior, mandatory, blocked, xp, gold, mh_impact, "
+                "time_block, recurring_rule, impact_notes, anchor_id, anchor_override"
+            )
+            .eq("date", yesterday)
+            .eq("status", "Done")
+            .not_.is_("recurring_rule", "null")
+            .execute()
+        )
+        source_tasks = done_res.data or []
+        if not source_tasks:
+            return {"success": True, "created": 0}
+
+        # Names that already exist for target date
+        existing_res = (
+            sb.table("tasks")
+            .select("task")
+            .eq("date", date)
+            .execute()
+        )
+        existing_names = {r["task"] for r in existing_res.data or []}
+
+        created = 0
+        for t in source_tasks:
+            if t["task"] in existing_names:
+                continue
+
+            new_row = {k: v for k, v in t.items()}
+            new_row["date"] = date
+            new_row["status"] = "Not started"
+            new_row["resolved_xp"] = None
+            new_row["resolved_gold"] = None
+            new_row["streak_xp"] = None
+            new_row["deferred"] = False
+            new_row["blocked"] = False
+
+            sb.table("tasks").insert(new_row).execute()
+            created += 1
+
+        return {"success": True, "created": created}
+    except Exception as exc:
+        return _err("generate_recurring_tasks", exc)
+
+
+# ---------------------------------------------------------------------------
+# update_stat
+# ---------------------------------------------------------------------------
+
+def update_stat(stat_id: str, delta: int) -> dict:
+    """
+    Add delta to stats.current_value for the given stat. Update last_updated to today.
+    delta can be negative.
+    Returns {success: True, new_value: float} on success.
+    """
+    try:
+        sb = get_client()
+
+        res = (
+            sb.table("stats")
+            .select("current_value")
+            .eq("id", stat_id)
+            .execute()
+        )
+        data = res.data or []
+        if not data:
+            return {"success": False, "error": "stat not found"}
+
+        new_value = float(data[0]["current_value"]) + delta
+        today = date_type.today().isoformat()
+
+        upd = (
+            sb.table("stats")
+            .update({"current_value": new_value, "last_updated": today})
+            .eq("id", stat_id)
+            .execute()
+        )
+        if upd.data is None:
+            return {"success": False, "error": "update returned no data"}
+        return {"success": True, "new_value": new_value}
+    except Exception as exc:
+        return _err("update_stat", exc)
+
+
+# ---------------------------------------------------------------------------
+# create_skill_link
+# ---------------------------------------------------------------------------
+
+def create_skill_link(task_id: str, skill_id: str, crossover_level: str) -> dict:
+    """
+    Insert a row into task_skill_links. Idempotent — success if link already exists.
+    crossover_level must be one of: Indirect, Partial, Direct.
+    Returns {success: True} on success.
+    """
+    try:
+        sb = get_client()
+
+        valid_levels = {"Indirect", "Partial", "Direct"}
+        if crossover_level not in valid_levels:
+            return {"success": False, "error": f"invalid crossover_level: {crossover_level!r}"}
+
+        existing = (
+            sb.table("task_skill_links")
+            .select("task_id")
+            .eq("task_id", task_id)
+            .eq("skill_id", skill_id)
+            .execute()
+        )
+        if existing.data:
+            return {"success": True}
+
+        res = (
+            sb.table("task_skill_links")
+            .insert({
+                "task_id": task_id,
+                "skill_id": skill_id,
+                "crossover_level": crossover_level,
+            })
+            .execute()
+        )
+        if not res.data:
+            return {"success": False, "error": "failed to insert task_skill_link"}
+        return {"success": True}
+    except Exception as exc:
+        return _err("create_skill_link", exc)
+
+
+# ---------------------------------------------------------------------------
+# delete_skill_link
+# ---------------------------------------------------------------------------
+
+def delete_skill_link(task_id: str, skill_id: str) -> dict:
+    """
+    Delete a row from task_skill_links matching both task_id and skill_id.
+    Returns {success: True} on success, {success: False, error: 'not found'} if absent.
+    """
+    try:
+        sb = get_client()
+
+        existing = (
+            sb.table("task_skill_links")
+            .select("task_id")
+            .eq("task_id", task_id)
+            .eq("skill_id", skill_id)
+            .execute()
+        )
+        if not existing.data:
+            return {"success": False, "error": "not found"}
+
+        sb.table("task_skill_links").delete().eq("task_id", task_id).eq("skill_id", skill_id).execute()
+        return {"success": True}
+    except Exception as exc:
+        return _err("delete_skill_link", exc)
+
+
+# ---------------------------------------------------------------------------
+# manual_mh_adjust
+# ---------------------------------------------------------------------------
+
+def manual_mh_adjust(delta: int, reason: str) -> dict:
+    """
+    Apply a flat MH delta directly to player_state.mh_score. Clamp to 0–100.
+    Re-derive mh_mode. Log the event to the events table.
+    Returns {success, new_mh_score, new_mh_mode, delta_applied}.
+    """
+    try:
+        sb = get_client()
+
+        ps_res = (
+            sb.table("player_state")
+            .select("mh_score")
+            .eq("id", 1)
+            .single()
+            .execute()
+        )
+        ps = ps_res.data
+        if not ps:
+            return {"success": False, "error": "player_state not found"}
+
+        raw_new = ps["mh_score"] + delta
+        new_mh_score = clamp_mh(raw_new)
+        delta_applied = new_mh_score - ps["mh_score"]
+        new_mh_mode = derive_mh_mode(new_mh_score)
+
+        upd = (
+            sb.table("player_state")
+            .update({"mh_score": new_mh_score, "mh_mode": new_mh_mode})
+            .eq("id", 1)
+            .execute()
+        )
+        if upd.data is None:
+            return {"success": False, "error": "failed to update player_state"}
+
+        sb.table("events").insert({
+            "event_type": "mh_manual",
+            "mh_delta": delta,
+            "notes": reason,
+        }).execute()
+
+        return {
+            "success": True,
+            "new_mh_score": new_mh_score,
+            "new_mh_mode": new_mh_mode,
+            "delta_applied": delta_applied,
+        }
+    except Exception as exc:
+        return _err("manual_mh_adjust", exc)
