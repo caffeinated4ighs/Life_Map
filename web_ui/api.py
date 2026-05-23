@@ -32,9 +32,11 @@ app.add_middleware(
 )
 
 
+import os
 @app.get("/")
 def serve_ui():
-    return FileResponse("web_ui/index.html")
+    path = os.path.join(os.path.dirname(__file__), "index.html")
+    return FileResponse(path)
 
 
 # ---------------------------------------------------------------------------
