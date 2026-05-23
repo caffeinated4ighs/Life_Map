@@ -625,6 +625,8 @@ TOOLS = [
 
 SYSTEM_PROMPT = """You are the Life Map assistant — a personal productivity companion who knows the user's life system and helps them manage it through natural conversation.
 
+You have no memory between sessions. Everything you know comes from the context block at the top of each message and the tools available to you. Use the tools to get current data — never assume or invent state.
+
 You have tools to read and write to the database. Use them silently — the user should never know a tool was called unless you're telling them what just happened.
 
 ## How to respond
@@ -635,13 +637,34 @@ After logging something: confirm it in plain language.
 After a read: just answer the question naturally.
 
 Good: "Added it for tomorrow — that's a P0 so I flagged it mandatory."
-Good: "Done. +45 XP, +8 G. MH ticked up a little."
-Good: "You've got 4 things today. The heavy ones are the gym and the SSN letter."
+Good: "✓ Gym done | +45 XP, +8 G. MH up a little."
+Good: "You've got 2 things today — gym and the bank visit."
 Bad: "Task created successfully with priority P0, mandatory: true, late_rule: Hard."
 Bad: "I have logged the event with event_type: steps, quantity: 8000."
 
 Never mention UUIDs, field names, table names, or enum values in replies.
-Never ask for an ID — resolve tasks by name yourself using get_tasks first.
+
+## Tool sequencing — mandatory rules
+
+Completing a task is ALWAYS two steps. No exceptions:
+  Step 1: call get_tasks(date, mh_mode) to get the task list and find the matching task ID
+  Step 2: call complete_task(task_id, ...) using the ID from step 1
+Never call complete_task with a guessed or invented task_id. If get_tasks returns nothing, tell the user the task wasn't found and ask them to check the name.
+
+Reading a specific item is ALWAYS two steps when you only have a name:
+  First call the list tool (get_tasks, get_skills, get_arcs, get_effects) to find the ID
+  Then call the detail tool (get_task, get_skill, get_arc, get_effect) if you need full detail
+
+When to use which read tool:
+- "tasks today" / "what's left" → get_tasks(today, mh_mode)
+- "tasks tomorrow" / "and tomorrow?" → get_tasks(tomorrow, mh_mode)
+- "skill tree" / "my skills" → get_skills()
+- "stat check" / "my stats" → get_stats()
+- "how am I doing" / "player state" → get_player_state()
+- "my goals" / "arcs" → get_arcs()
+- "active buffs" / "effects" → get_active_effects()
+- "streak" / "recent performance" → get_streak_log()
+- "anchors today" / "what's scheduled" → get_anchors(date)
 
 ## Inference rules
 
@@ -667,43 +690,29 @@ Completion defaults when not stated:
 - "late", "just got to it" → soft timing
 - "missed it", "didn't do it" → don't complete, offer to defer or delete
 
-Task matching:
-- Match on key terms only. Ignore filler words like "task", "the", "my", "thing".
-- "ssn thing" matches "SSN support letter". "gym" matches "Morning gym session".
-- Always call get_tasks first to find the ID. Never guess a UUID.
-
-Fuzzy queries:
-- "and tomorrow?" → call get_tasks with tomorrow's date
-- "how am I doing?" → call get_player_state
-- "what's left?" → call get_tasks for today
-- "skill tree?" → call get_skills
-- "stat check" → call get_stats
-- "streak?" → call get_streak_log
+Task name matching — when scanning get_tasks results:
+- Match on key terms only. Ignore filler words like "task", "the", "my", "thing", "complete".
+- "gym" matches "Morning gym session". "ssn thing" matches "SSN support letter".
+- "Complete gym" → strip "Complete", match on "gym".
+- If multiple tasks match, pick the closest. If genuinely ambiguous, ask.
 
 ## Closing the day
 
 end_day is irreversible. Before calling it, confirm with the user in one line:
 "Close the day? This can't be undone."
 Only call end_day after they say yes (or equivalent — "yeah", "do it", "go ahead").
-
 After end_day completes, always call get_player_state and include the streak result in your reply.
 Example: "Day closed. Streak's at 4 — mandatory done. Sleep well."
 
-## Reply format for write actions
-
-Use this format after any write that produces rewards or a state change:
-✓ [what happened] | +{xp} XP, +{gold} G
-Example: "✓ Gym done | +45 XP, +8 G. MH up a little."
-For writes with no rewards (create_arc, update_task, etc.), just confirm plainly in one sentence.
-
 ## If something fails
 
-If a tool returns success: false or an error, say so plainly in one sentence. Don't invent a workaround.
-"Couldn't find that task — want to try a different name?"
-"Looks like the day's already closed."
+If a tool returns an error or task not found:
+- For task not found: try rephrasing internally — call get_tasks again and look harder. Only tell the user if you still can't find it after checking.
+- For other errors: say so plainly in one sentence. Don't invent a workaround.
 
 ## What you don't do
 
+- Don't guess or invent IDs — always resolve via a list tool first
 - Don't ask clarifying questions for low-stakes inputs — just infer
 - Don't describe what you're about to do — just do it
 - Don't repeat the user's words back to them
@@ -756,12 +765,7 @@ def _execute_tool(name: str, args: dict) -> dict:
         "get_stats":          lambda a: get_stats(),
         "get_stat":           lambda a: get_stat(a["stat_id"]),
         # writes — existing
-        "complete_task":      lambda a: complete_task(
-                                  a["task_id"],
-                                  a["completion_time"],
-                                  a.get("partial_credit", 1.0),
-                                  a["mh_mode"],
-                              ),
+        "complete_task":      lambda a: _resolve_and_complete(a),
         "create_task":        lambda a: create_task(a),
         "log_event":          lambda a: log_event(a),
         "end_day":            lambda a: _end_day_safe(a["date"]),
@@ -772,7 +776,7 @@ def _execute_tool(name: str, args: dict) -> dict:
         "update_arc":         lambda a: update_arc(a["arc_id"], a["updates"]),
         "link_arc_task":             lambda a: link_arc_task(a["arc_id"], a["task_id"]),
         "link_arc_skill":            lambda a: link_arc_skill(a["arc_id"], a["skill_id"]),
-        "create_effect":             lambda a: create_effect(a),
+        "create_effect":             lambda a: create_effect({**a, "type": a.pop("effect_type")} if "effect_type" in a else a),
         "update_effect":             lambda a: update_effect(a["effect_id"], a["updates"]),
         "update_task":               lambda a: update_task(a["task_id"], a["updates"]),
         "delete_task":               lambda a: delete_task(a["task_id"]),
@@ -796,6 +800,53 @@ def _execute_tool(name: str, args: dict) -> dict:
         return {"_script_error": True, "message": error_msg}
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# _resolve_and_complete — architectural task ID resolution
+# ---------------------------------------------------------------------------
+
+def _resolve_and_complete(args: dict) -> dict:
+    """
+    Intercepts every complete_task call and validates the task_id against
+    the live task list before executing. If the ID is wrong or missing,
+    returns the actual task list so the model can recover without surfacing
+    the error to the user.
+
+    This removes model reliance on prompt compliance for the two-step
+    lookup sequence — the backend enforces it unconditionally.
+    """
+    from scripts.reads import get_tasks, get_player_state
+    from scripts.writes import complete_task
+    from datetime import date as _date
+
+    task_id         = args.get("task_id", "")
+    completion_time = args.get("completion_time", "on_time")
+    partial_credit  = float(args.get("partial_credit", 1.0))
+
+    # Always resolve mh_mode from live state — don't trust the model's arg
+    ps      = get_player_state()
+    mh_mode = ps.get("mh_mode", "Normal")
+
+    today = _date.today().isoformat()
+    tasks = get_tasks(today, mh_mode)
+
+    valid_ids = {t["id"] for t in tasks}
+
+    if task_id not in valid_ids:
+        # ID is wrong or hallucinated — return the real task list so the
+        # model can find the correct ID and retry within the same loop
+        return {
+            "error":           "task_id_not_found",
+            "message":         f"No task with that ID in today's list. Here are today's tasks:",
+            "available_tasks": [{"id": t["id"], "task": t["task"]} for t in tasks],
+        }
+
+    return complete_task(task_id, {
+        "completion_time": completion_time,
+        "partial_credit":  partial_credit,
+        "mh_mode":         mh_mode,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -997,14 +1048,16 @@ def chat(req: ChatRequest):
                 except Exception as e:
                     result = {"error": str(e)}
 
-                # Short-circuit if the script returned a clean error
+                # Short-circuit on clean script errors — but NOT for complete_task
+                # task_id_not_found: let the model see the task list and retry
                 if isinstance(result, dict) and result.get("_script_error"):
-                    return ChatResponse(
-                        reply=result["message"],
-                        state_delta=state_delta if state_delta else None,
-                        action_taken=action_taken,
-                        declined=False,
-                    )
+                    if name != "complete_task":
+                        return ChatResponse(
+                            reply=result["message"],
+                            state_delta=state_delta if state_delta else None,
+                            action_taken=action_taken,
+                            declined=False,
+                        )
 
                 messages.append({
                     "role":         "tool",

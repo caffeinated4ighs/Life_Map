@@ -659,7 +659,9 @@ async function init() {
 
     if (!res.ok) {
       // API returned an error — show the detail so it's debuggable
-      const detail = data.detail || JSON.stringify(data);
+      const detail = Array.isArray(data.detail)
+        ? data.detail.map(e => e.loc?.join(".") + ": " + e.msg).join(" | ")
+        : data.detail || JSON.stringify(data);
       appendMsg("system", `⚠ /morning error (${res.status}): ${escHtml(detail)}`, "declined");
     } else {
       // run_morning returns: {date, snapshot, player_state, tasks, active_arcs, active_effects}
@@ -722,7 +724,13 @@ async function sendMessage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: text,
-        context: currentContext,   // always send the latest state
+        context: {
+          mh_score:     parseInt(currentContext.mh_score)     || 75,
+          mh_mode:      currentContext.mh_mode                || "Reduced",
+          gold_balance: parseInt(currentContext.gold_balance) || 0,
+          streak_count: parseInt(currentContext.streak_count) || 0,
+          date:         currentContext.date,
+        },
       }),
     });
     const data = await res.json();
