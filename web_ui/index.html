@@ -630,10 +630,10 @@ function renderTasks(taskList) {
     const statusClass = t.status || "pending";
     row.innerHTML = `
       <div class="task-status ${statusClass}"></div>
-      <div class="task-name">${escHtml(t.name || t.task_name || "Unnamed task")}</div>
+      <div class="task-name">${escHtml(t.task || t.task_name || "Unnamed task")}</div>
       <div class="task-xp">${t.base_xp ? t.base_xp + " XP" : ""}</div>
     `;
-    row.addEventListener("click", () => prefillTask(t.name || t.task_name || ""));
+    row.addEventListener("click", () => prefillTask(t.task || t.task_name || ""));
     listEl.appendChild(row);
   });
 }
