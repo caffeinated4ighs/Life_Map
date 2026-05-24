@@ -1,1 +1,0 @@
-# Life System — Scripts package
